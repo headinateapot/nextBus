@@ -33,8 +33,8 @@
     }
 
     function calculateEtaInMinutesFactory(nowInMilliseconds) {
-        return function calculateEtaInMinutes(busInfoArray) {
-            var arrivalTimestamp = busInfoArray[4];
+        return function calculateEtaInMinutes(busInfo) {
+            var arrivalTimestamp = busInfo.estimatedTime;
             return (arrivalTimestamp - nowInMilliseconds) / 1000 / 60;
         };
     }
@@ -43,40 +43,82 @@
         return (etaInMinutes < 1)? 'due' : Math.round(etaInMinutes) + ' mins';
     }
 
-    function processBusInfoDataFactory(busRoute) {
-        return function processBusInfoData(dataStr) {
-            var busInfoArrays = parseLineDelimitedJson(dataStr);
-            var busInfoOnRoute = _.filter(busInfoArrays, isRightBusFactory(busRoute));
+    function toBusInfo(busInfoArray) {
+        var isSafeToRead = _.isArray(busInfoArray) && busInfoArray.length === 5;
 
-            var now = Date.now();
-            var nextBusesEta = _.map(busInfoOnRoute, calculateEtaInMinutesFactory(now));
-            console.log(nextBusesEta);
-            var hNextBusesEta = _.map(nextBusesEta, humanReadableEtaInMinutes);
-
-            $('#content').text(hNextBusesEta.join());
-            
-            
+        return {
+            lineName: isSafeToRead ? busInfoArray[2] : '',
+            stopPointName: isSafeToRead ? busInfoArray[1] : '',
+            destinationName: isSafeToRead ? busInfoArray[3] : '',
+            estimatedTime: isSafeToRead ? busInfoArray[4] : 0  //TODO: review
         };
     }
 
-    function getNextBusesEta(busStop) {
+    function toNextBusEtaInfo(busStopId, busInfoObjArray, humanReadableNextBusesEtaArray) {
+        var safeBusInfoObjArray = _.isArray(busInfoObjArray) ? busInfoObjArray : [];
+        var safeHNextBusesEtaArray = _.isArray(humanReadableNextBusesEtaArray) ? humanReadableNextBusesEtaArray : [];
+
+        var busInfoObj = _.head(safeBusInfoObjArray) || {};
+
+        return {
+            busStopId: busStopId,
+            lineName: busInfoObj.lineName || '',
+            stopPointName: busInfoObj.stopPointName || '',
+            destinationName: busInfoObj.destinationName || '',
+            nextBusesEta: safeHNextBusesEtaArray
+        };
+    }
+
+    function calculateNextBusEtaInfo(dataStr, busStopId, busLineName) {
+        var busInfoArrays = parseLineDelimitedJson(dataStr);
+        var busInfoArraysOnRoute = _.filter(busInfoArrays, isRightBusFactory(busLineName));
+        var busInfoObjs = _.orderBy(_.map(busInfoArraysOnRoute, toBusInfo), ['estimatedTime'], ['asc']);
+
+        var now = Date.now();
+        var nextBusesEta = _.map(busInfoObjs, calculateEtaInMinutesFactory(now));
+        console.log(nextBusesEta);
+        var hNextBusesEta = _.map(nextBusesEta, humanReadableEtaInMinutes);
+
+        return toNextBusEtaInfo(busStopId, busInfoObjs, hNextBusesEta);
+    }
+
+    function renderNextBusEtaView($elem, nextBusEtaInfo) {
+        var titleElem = '<h5>' + nextBusEtaInfo.lineName + ' from ' + nextBusEtaInfo.stopPointName + ' to ' + nextBusEtaInfo.destinationName + '</h5>';
+        var listElem = _.map(nextBusEtaInfo.nextBusesEta, function(eta) {
+            return '<li>' + eta + '</li>';
+        }).join('\n');
+        var divElem = '<div class="bus" id="' + nextBusEtaInfo.busStopId + '">' + titleElem +
+            '<ul class="nextBusEta">\n' + listElem + '</ul></div>';
+        $elem.append(divElem);
+    }
+
+    function displayNextBusEtaFactory(busStopId, busLineName, $elem) {
+        return function displayNextBusEta(dataStr) {
+            var nextBusEtaInfo = calculateNextBusEtaInfo(dataStr, busStopId, busLineName);
+            renderNextBusEtaView($elem, nextBusEtaInfo);
+        };
+    }
+
+    function getNextBusesEta(busStop, $elem) {
         var busStopId = busStops[busStop].busStopId;
-        var busRoute = busStops[busStop].busLineName;
+        var busLineName = busStops[busStop].busLineName;
 
         var busCountDownUrl = countDownUrl(busStopId);
 
         $.ajax({
             url: busCountDownUrl,
             data: null,
-            success: processBusInfoDataFactory(busRoute),
+            success: displayNextBusEtaFactory(busStopId, busLineName, $elem),
             dataType: 'text'
         });
     }
 
     $(function() {
-        var busStop = 'mountViewRoad';
-        //var busStop = 'finsburyPark';
-        getNextBusesEta(busStop);
+        var $content = $('#content');
+        var busStops = ['mountViewRoad', 'finsburyPark'];
+        _.each(busStops, function(busStop) {
+            getNextBusesEta(busStop, $content);
+        });
     });
 
 })();
